@@ -17,7 +17,7 @@ int RightMotorSpeedPin = 7;
 // The PWM pin for control the speed of RPLIDAR's motor.
 constexpr int RPLIDAR_MOTOR = 8;
 
-constexpr float MAX_lidarDistanceCm_CM = 20.0;
+constexpr float MAX_lidarDistanceCm_CM = 25.0;
 constexpr int MAX_MOTOR_SPEED = 255;
 
 // RC channel mappings
@@ -42,8 +42,8 @@ void setup() {
   Serial.begin(115200);
  
   // Attach iBus object to serial port
-  //Serial2.begin(9600);
-  //ibus.begin(Serial2);
+  Serial2.begin(9600);
+  ibus.begin(Serial2);
 
   // Bind the RPLIDAR driver to the Arduino hardware serial
   lidar.begin(Serial1);
@@ -70,9 +70,9 @@ void loop() {
   int leftMotorSpeed = rcForwardReverse + rcLeftRight;
   int rightMotorSpeed = rcForwardReverse - rcLeftRight;
 
-  // Correct speeds to be within PWM range and set direction
-  controlMotor(LeftMotorPin1, LeftMotorPin2, LeftMotorSpeedPin, leftMotorSpeed);
-  controlMotor(RightMotorPin1, RightMotorPin2, RightMotorSpeedPin,  rightMotorSpeed);
+   bool obstacleDetected = false;
+   bool turnLeft = false;
+   bool turnRight = false;
 
   if (IS_OK(lidar.waitPoint())) {
     float lidarDistanceCm = lidar.getCurrentPoint().distance / 10.0;
@@ -88,6 +88,17 @@ void loop() {
       // Check if the object is within the maximum distance
       if (lidarDistanceCm <= MAX_lidarDistanceCm_CM) {
         Serial.println("Distance: " + String(lidarDistanceCm) + "cm - Angle: " + String(lidarAngleDeg));
+      obstacleDetected = true;
+        // Determine if the obstacle is to the left or right of the forward path
+        if (lidarAngleDeg >= 0 && lidarAngleDeg < 90) {
+          // Obstacle is detected to the right, so turn left
+          turnLeft = true;
+          Serial.println("Turn left");
+        } else if (lidarAngleDeg > 270 && lidarAngleDeg <= 360) {
+          // Obstacle is detected to the left, so turn right
+          turnRight = true;
+          Serial.println("Turn right");
+        }
       }
     }
   } else {
@@ -106,6 +117,25 @@ void loop() {
       delay(1000);
     }
   }
+
+  // Execute obstacle avoidance maneuver
+  if (obstacleDetected) {
+    Serial.println("Obstacle detected!");
+    if (turnLeft) {
+      // Adjust motor speeds to turn left
+      leftMotorSpeed = -255;
+      rightMotorSpeed = 255;
+    } else if (turnRight) {
+      // Adjust motor speeds to turn right
+      leftMotorSpeed = 255;
+      rightMotorSpeed = -255;
+    }
+  }
+
+  // Correct speeds to be within PWM range and set direction
+  controlMotor(LeftMotorPin1, LeftMotorPin2, LeftMotorSpeedPin, leftMotorSpeed);
+  controlMotor(RightMotorPin1, RightMotorPin2, RightMotorSpeedPin,  rightMotorSpeed);
+
 }
 
 void controlMotor(int pin1, int pin2, int speedPin, int speed) {
