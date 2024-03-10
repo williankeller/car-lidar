@@ -73,8 +73,6 @@ void loop() {
       rcForwardReverse = rcAux1;
   }
 
-  Serial.println(" Aux1: " + String(rcAux1));
-
   int rcLeftRight = readChannel(CH1_LEFT_RIGHT, -255, 255, 0);
 
   // Determine direction and speed for each motor
