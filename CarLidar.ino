@@ -5,165 +5,179 @@
 RPLidar lidar;
 IBusBM ibus;
 
-// Motor control pins
-int LeftMotorPin1 = 2;
-int LeftMotorPin2 = 3;
-int RightMotorPin1 = 4;
-int RightMotorPin2 = 5;
+// Motor control and speed pins
+const int LeftMotorPin1 = 2;
+const int LeftMotorPin2 = 3;
+const int RightMotorPin1 = 4;
+const int RightMotorPin2 = 5;
+const int LeftMotorSpeedPin = 6;
+const int RightMotorSpeedPin = 7;
 
-// Speed control pins (PWM capable)
-int LeftMotorSpeedPin = 6;
-int RightMotorSpeedPin = 7;
-
-// The PWM pin for control the speed of RPLIDAR's motor.
-constexpr int RPLIDAR_MOTOR = 8;
-constexpr float MAX_lidarDistanceCm_CM = 25.0;
-constexpr int MAX_MOTOR_SPEED = 255;
+// RPLIDAR motor speed control
+const int RPLIDAR_MOTOR = 8;
+const float MAX_LIDAR_DISTANCE_CM = 30.0;
+const int MAX_MOTOR_SPEED = 255;
 
 // RC channel mappings
-#define CH1_LEFT_RIGHT 0
-#define CH2_FORWARD_REVERSE 1
-#define CH3_THROTTLE 2
-#define CH4_RUDDER 3
-#define CH5_AUX1 4
+enum Channels {
+  CH1_LEFT_RIGHT = 0,
+  CH2_FORWARD_REVERSE = 1,
+  CH3_THROTTLE = 2,
+  CH4_RUDDER = 3,
+  CH5_AUX1 = 4
+};
 
-// Read the number of a given channel and convert to the range provided.
-// If the channel is off, return the default value
+// Global variables for obstacle detection
+bool obstacleDetected = false;
+bool turnLeft = false;
+bool turnRight = false;
+bool turnAround = false;
+bool shouldReverse = false;
+
+void setup() {
+  Serial.begin(115200);
+  Serial2.begin(9600);
+  ibus.begin(Serial2);
+  lidar.begin(Serial1);
+
+  pinMode(LeftMotorPin1, OUTPUT);
+  pinMode(LeftMotorPin2, OUTPUT);
+  pinMode(RightMotorPin1, OUTPUT);
+  pinMode(RightMotorPin2, OUTPUT);
+  pinMode(LeftMotorSpeedPin, OUTPUT);
+  pinMode(RightMotorSpeedPin, OUTPUT);
+  pinMode(RPLIDAR_MOTOR, OUTPUT);
+}
+
+void loop() {
+  int rcAux1 = readChannel(CH5_AUX1, 0, 255, 0);
+  int rcForwardReverse = readChannel(CH2_FORWARD_REVERSE, -255, 255, 0);
+  int rcLeftRight = readChannel(CH1_LEFT_RIGHT, -255, 255, 0);
+
+  resetObstacleDetection(); // Reset obstacle detection state
+  controlLidar(rcAux1);
+
+  int leftMotorSpeed, rightMotorSpeed;
+
+  calculateMotorSpeeds(rcAux1, rcForwardReverse, rcLeftRight, leftMotorSpeed, rightMotorSpeed);
+
+  if (obstacleDetected) adjustForObstacle(leftMotorSpeed, rightMotorSpeed);
+
+  controlMotors(leftMotorSpeed, rightMotorSpeed);
+}
+
 int readChannel(byte channelInput, int minLimit, int maxLimit, int defaultValue) {
   uint16_t ch = ibus.readChannel(channelInput);
   if (ch < 100) return defaultValue;
   return map(ch, 1000, 2000, minLimit, maxLimit);
 }
 
-void setup() {
-  // Start serial monitor
-  Serial.begin(115200);
- 
-  // Attach iBus object to serial port
-  Serial2.begin(9600);
-  ibus.begin(Serial2);
-
-  // Bind the RPLIDAR driver to the Arduino hardware serial
-  lidar.begin(Serial1);
-
-  // Set motor control pins as outputs
-  pinMode(LeftMotorPin1, OUTPUT);
-  pinMode(LeftMotorPin2, OUTPUT);
-  pinMode(RightMotorPin1, OUTPUT);
-  pinMode(RightMotorPin2, OUTPUT);
-  
-  // Initialize PWM pins for motor speed control
-  pinMode(LeftMotorSpeedPin, OUTPUT);
-  pinMode(RightMotorSpeedPin, OUTPUT);
-
-  pinMode(RPLIDAR_MOTOR, OUTPUT);
+void controlLidar(int rcAux1) {
+  if (rcAux1 < 10) {
+    analogWrite(RPLIDAR_MOTOR, 0);
+    return;
+  }
+  analogWrite(RPLIDAR_MOTOR, MAX_MOTOR_SPEED);
+  if (rcAux1 > 10) processLidarData();
 }
 
-void loop() {
-  // Read RC channel values
-  // Assuming rcAux1 is being read correctly from CH5_AUX1 as you've described
-  int rcAux1 = readChannel(CH5_AUX1, 0, 255, 0); // Default speed for auto mode
+void processLidarData() {
+  if (IS_OK(lidar.waitPoint())) {
+    float distance = lidar.getCurrentPoint().distance / 10.0; // Convert to cm
+    float angle = lidar.getCurrentPoint().angle;
+    byte quality = lidar.getCurrentPoint().quality;
 
-  // Reading CH2_FORWARD_REVERSE without using rcAux1 as the default value
-  int rcForwardReverse = readChannel(CH2_FORWARD_REVERSE, -255, 255, 0);
+    if (quality > 0 && distance > 0.00 && (angle > 270 || angle < 90) && distance <= MAX_LIDAR_DISTANCE_CM) {
+      Serial.println("Distance: " + String(distance) + "cm - Angle: " + String(angle));
+      detectObstacleAndAdjust(angle, distance);
+    }
+  } else {
+    attemptLidarRecovery();
+  }
+}
 
-  // Assuming no manual input if rcForwardReverse is 0
+void attemptLidarRecovery() {
+  analogWrite(RPLIDAR_MOTOR, 0);
+  Serial.println("Nope :(");
+
+  rplidar_response_device_info_t info;
+  if (IS_OK(lidar.getDeviceInfo(info, 100))) {
+    lidar.startScan();
+    analogWrite(RPLIDAR_MOTOR, MAX_MOTOR_SPEED);
+    delay(1000);
+  }
+}
+
+void detectObstacleAndAdjust(float angle, float distance) {
+  obstacleDetected = true;
+
+  turnLeft = angle >= 0 && angle < 90;
+  turnRight = angle > 270 && angle <= 360;
+
+  // If the obstacle is directly in front of the car, turn around
+  if (angle > 340 && angle < 20 && distance <= 15) {
+    Serial.println("------------------FRONNNTTTTTT");
+    turnAround = true;
+
+    // If the object is too close, stop the car and reverse a bit
+    if (distance <= 15) {
+      Serial.println("------------------Reverse");
+      shouldReverse = true;
+    }
+  }
+  // If the object is not directly in front of the car, prioritize turning left or right
+  //if (turnLeft || turnRight) turnAround = false;
+
+  // if reverse, prioritize reversing
+  if (shouldReverse || turnAround) {
+    turnLeft = false;
+    turnRight = false;
+  }
+
+  if (turnLeft) Serial.println("Turn left");
+  if (turnRight) Serial.println("Turn right");
+}
+
+void resetObstacleDetection() {
+  obstacleDetected = false;
+  turnLeft = false;
+  turnRight = false;
+  shouldReverse = false;
+}
+
+void adjustForObstacle(int &leftMotorSpeed, int &rightMotorSpeed) {
+  Serial.println("Obstacle detected!");
+  if (turnLeft) {
+    leftMotorSpeed = -MAX_MOTOR_SPEED;
+    rightMotorSpeed = MAX_MOTOR_SPEED;
+  } else if (turnRight) {
+    leftMotorSpeed = MAX_MOTOR_SPEED;
+    rightMotorSpeed = -MAX_MOTOR_SPEED;
+  } else if (turnAround) {
+    leftMotorSpeed = -MAX_MOTOR_SPEED;
+    rightMotorSpeed = -MAX_MOTOR_SPEED;
+  } else if (reverse) {
+    leftMotorSpeed = -MAX_MOTOR_SPEED;
+    rightMotorSpeed = -MAX_MOTOR_SPEED;
+  }
+}
+
+void calculateMotorSpeeds(int rcAux1, int rcForwardReverse, int rcLeftRight, int &leftMotorSpeed, int &rightMotorSpeed) {
+  // Use rcAux1 for forward speed in auto mode
   if (rcAux1 > 100) {
-      // Use rcAux1 for forward/reverse speed in auto mode
       rcForwardReverse = rcAux1;
   }
+  leftMotorSpeed = rcForwardReverse + rcLeftRight;
+  rightMotorSpeed = rcForwardReverse - rcLeftRight;
+}
 
-  int rcLeftRight = readChannel(CH1_LEFT_RIGHT, -255, 255, 0);
-
-  // Determine direction and speed for each motor
-  int leftMotorSpeed = rcForwardReverse + rcLeftRight;
-  int rightMotorSpeed = rcForwardReverse - rcLeftRight;
-
-   bool obstacleDetected = false;
-   bool turnLeft = false;
-   bool turnRight = false;
-
-   // Turn on the rplidar motor if rcAux1 is lower than 10
-    if (rcAux1 < 10) {
-      analogWrite(RPLIDAR_MOTOR, 0);
-    } else {
-      analogWrite(RPLIDAR_MOTOR, MAX_MOTOR_SPEED);
-    }
-
-  // Enable LIDAR scanning if rcAux1 is greater than 10
-  if (rcAux1 > 10) {
-    if (IS_OK(lidar.waitPoint())) {
-      float lidarDistanceCm = lidar.getCurrentPoint().distance / 10.0;
-      float lidarAngleDeg = lidar.getCurrentPoint().angle;
-      //bool  startBit = lidar.getCurrentPoint().startBit;
-      byte  quality  = lidar.getCurrentPoint().quality;
-
-      if (quality == 0 || lidarDistanceCm == 0.00) {
-        return;
-      }
-
-      if ((lidarAngleDeg > 270 || lidarAngleDeg < 90)) {
-        // Check if the object is within the maximum distance
-        if (lidarDistanceCm <= MAX_lidarDistanceCm_CM) {
-          Serial.println("Distance: " + String(lidarDistanceCm) + "cm - Angle: " + String(lidarAngleDeg));
-        obstacleDetected = true;
-          // Determine if the obstacle is to the left or right of the forward path
-          if (lidarAngleDeg >= 0 && lidarAngleDeg < 90) {
-            // Obstacle is detected to the right, so turn left
-            turnLeft = true;
-            Serial.println("Turn left");
-          } else if (lidarAngleDeg > 270 && lidarAngleDeg <= 360) {
-            // Obstacle is detected to the left, so turn right
-            turnRight = true;
-            Serial.println("Turn right");
-          }
-        }
-      }
-    } else {
-      // Stop the rplidar motor
-      analogWrite(RPLIDAR_MOTOR, 0);
-      Serial.println("Nope :(");
-
-      // try to detect RPLIDAR...
-      rplidar_response_device_info_t info;
-      if (IS_OK(lidar.getDeviceInfo(info, 100))) {
-        // detected...
-        lidar.startScan();
-
-        // start motor rotating at max allowed speed
-        analogWrite(RPLIDAR_MOTOR, MAX_MOTOR_SPEED);
-        delay(1000);
-      }
-    }
-  }
-
-  // Execute obstacle avoidance maneuver
-  if (obstacleDetected) {
-    Serial.println("Obstacle detected!");
-    if (turnLeft) {
-      // Adjust motor speeds to turn left
-      leftMotorSpeed = -255;
-      rightMotorSpeed = 255;
-    } else if (turnRight) {
-      // Adjust motor speeds to turn right
-      leftMotorSpeed = 255;
-      rightMotorSpeed = -255;
-    }
-  }
-
-  // Correct speeds to be within PWM range and set direction
-  controlMotor(LeftMotorPin1, LeftMotorPin2, LeftMotorSpeedPin, leftMotorSpeed);
-  controlMotor(RightMotorPin1, RightMotorPin2, RightMotorSpeedPin,  rightMotorSpeed);
+void controlMotors(int leftSpeed, int rightSpeed) {
+  controlMotor(LeftMotorPin1, LeftMotorPin2, LeftMotorSpeedPin, leftSpeed);
+  controlMotor(RightMotorPin1, RightMotorPin2, RightMotorSpeedPin, rightSpeed);
 }
 
 void controlMotor(int pin1, int pin2, int speedPin, int speed) {
-  if (speed > 0) {
-    digitalWrite(pin1, HIGH);
-    digitalWrite(pin2, LOW);
-  } else {
-    digitalWrite(pin1, LOW);
-    digitalWrite(pin2, HIGH);
-    speed = -speed; // Make speed positive for PWM
-  }
-  analogWrite(speedPin, constrain(speed, 0, 255)); // Constrain speed to valid PWM range
+  digitalWrite(pin1, speed > 0 ? HIGH : LOW);
+  digitalWrite(pin2, speed > 0 ? LOW : HIGH);
+  analogWrite(speedPin, constrain(abs(speed), 0, 255));
 }
