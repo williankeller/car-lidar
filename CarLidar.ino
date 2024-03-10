@@ -21,13 +21,11 @@ constexpr float MAX_lidarDistanceCm_CM = 25.0;
 constexpr int MAX_MOTOR_SPEED = 255;
 
 // RC channel mappings
-// These 2 channels represents the same stick.
-// Poiting left value -100
-// Poiting right value 100
-// Poiting up value 100
-// Poiting down value -100
 #define CH1_LEFT_RIGHT 0
 #define CH2_FORWARD_REVERSE 1
+#define CH3_THROTTLE 2
+#define CH4_RUDDER 3
+#define CH5_AUX1 4
 
 // Read the number of a given channel and convert to the range provided.
 // If the channel is off, return the default value
@@ -63,8 +61,21 @@ void setup() {
 
 void loop() {
   // Read RC channel values
-  int rcLeftRight = readChannel(CH1_LEFT_RIGHT, -255, 255, 0);
+  // Assuming rcAux1 is being read correctly from CH5_AUX1 as you've described
+  int rcAux1 = readChannel(CH5_AUX1, 0, 255, 0); // Default speed for auto mode
+
+  // Reading CH2_FORWARD_REVERSE without using rcAux1 as the default value
   int rcForwardReverse = readChannel(CH2_FORWARD_REVERSE, -255, 255, 0);
+
+  // Assuming no manual input if rcForwardReverse is 0
+  if (rcAux1 > 100) {
+      // Use rcAux1 for forward/reverse speed in auto mode
+      rcForwardReverse = rcAux1;
+  }
+
+  Serial.println(" Aux1: " + String(rcAux1));
+
+  int rcLeftRight = readChannel(CH1_LEFT_RIGHT, -255, 255, 0);
 
   // Determine direction and speed for each motor
   int leftMotorSpeed = rcForwardReverse + rcLeftRight;
@@ -74,47 +85,57 @@ void loop() {
    bool turnLeft = false;
    bool turnRight = false;
 
-  if (IS_OK(lidar.waitPoint())) {
-    float lidarDistanceCm = lidar.getCurrentPoint().distance / 10.0;
-    float lidarAngleDeg = lidar.getCurrentPoint().angle;
-    //bool  startBit = lidar.getCurrentPoint().startBit;
-    byte  quality  = lidar.getCurrentPoint().quality;
-
-    if (quality == 0 || lidarDistanceCm == 0.00) {
-      return;
+   // Turn on the rplidar motor if rcAux1 is lower than 10
+    if (rcAux1 < 10) {
+      analogWrite(RPLIDAR_MOTOR, 0);
+    } else {
+      analogWrite(RPLIDAR_MOTOR, MAX_MOTOR_SPEED);
     }
 
-    if ((lidarAngleDeg > 270 || lidarAngleDeg < 90)) {
-      // Check if the object is within the maximum distance
-      if (lidarDistanceCm <= MAX_lidarDistanceCm_CM) {
-        Serial.println("Distance: " + String(lidarDistanceCm) + "cm - Angle: " + String(lidarAngleDeg));
-      obstacleDetected = true;
-        // Determine if the obstacle is to the left or right of the forward path
-        if (lidarAngleDeg >= 0 && lidarAngleDeg < 90) {
-          // Obstacle is detected to the right, so turn left
-          turnLeft = true;
-          Serial.println("Turn left");
-        } else if (lidarAngleDeg > 270 && lidarAngleDeg <= 360) {
-          // Obstacle is detected to the left, so turn right
-          turnRight = true;
-          Serial.println("Turn right");
+  // Enable LIDAR scanning if rcAux1 is greater than 10
+  if (rcAux1 > 10) {
+    if (IS_OK(lidar.waitPoint())) {
+      float lidarDistanceCm = lidar.getCurrentPoint().distance / 10.0;
+      float lidarAngleDeg = lidar.getCurrentPoint().angle;
+      //bool  startBit = lidar.getCurrentPoint().startBit;
+      byte  quality  = lidar.getCurrentPoint().quality;
+
+      if (quality == 0 || lidarDistanceCm == 0.00) {
+        return;
+      }
+
+      if ((lidarAngleDeg > 270 || lidarAngleDeg < 90)) {
+        // Check if the object is within the maximum distance
+        if (lidarDistanceCm <= MAX_lidarDistanceCm_CM) {
+          Serial.println("Distance: " + String(lidarDistanceCm) + "cm - Angle: " + String(lidarAngleDeg));
+        obstacleDetected = true;
+          // Determine if the obstacle is to the left or right of the forward path
+          if (lidarAngleDeg >= 0 && lidarAngleDeg < 90) {
+            // Obstacle is detected to the right, so turn left
+            turnLeft = true;
+            Serial.println("Turn left");
+          } else if (lidarAngleDeg > 270 && lidarAngleDeg <= 360) {
+            // Obstacle is detected to the left, so turn right
+            turnRight = true;
+            Serial.println("Turn right");
+          }
         }
       }
-    }
-  } else {
-    // Stop the rplidar motor
-    analogWrite(RPLIDAR_MOTOR, 0);
-    Serial.println("Nope :(");
+    } else {
+      // Stop the rplidar motor
+      analogWrite(RPLIDAR_MOTOR, 0);
+      Serial.println("Nope :(");
 
-    // try to detect RPLIDAR...
-    rplidar_response_device_info_t info;
-    if (IS_OK(lidar.getDeviceInfo(info, 100))) {
-      // detected...
-      lidar.startScan();
+      // try to detect RPLIDAR...
+      rplidar_response_device_info_t info;
+      if (IS_OK(lidar.getDeviceInfo(info, 100))) {
+        // detected...
+        lidar.startScan();
 
-      // start motor rotating at max allowed speed
-      analogWrite(RPLIDAR_MOTOR, MAX_MOTOR_SPEED);
-      delay(1000);
+        // start motor rotating at max allowed speed
+        analogWrite(RPLIDAR_MOTOR, MAX_MOTOR_SPEED);
+        delay(1000);
+      }
     }
   }
 
