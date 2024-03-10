@@ -15,8 +15,11 @@ const int RightMotorSpeedPin = 7;
 
 // RPLIDAR motor speed control
 const int RPLIDAR_MOTOR = 8;
-const float MAX_LIDAR_DISTANCE_CM = 30.0;
 const int MAX_MOTOR_SPEED = 255;
+const float MAX_LIDAR_DISTANCE_CM = 28.0;
+const float MIN_SAFE_DISTANCE_CM = 16.0;
+const int RIGHT_TURN_THRESHOLD = 90;
+const int LEFT_TURN_THRESHOLD = 270;
 
 // RC channel mappings
 enum Channels {
@@ -31,7 +34,6 @@ enum Channels {
 bool obstacleDetected = false;
 bool turnLeft = false;
 bool turnRight = false;
-bool turnAround = false;
 bool shouldReverse = false;
 
 void setup() {
@@ -61,8 +63,14 @@ void loop() {
 
   calculateMotorSpeeds(rcAux1, rcForwardReverse, rcLeftRight, leftMotorSpeed, rightMotorSpeed);
 
+  // Check obstacle detection and adjust motor speeds accordingly
   if (obstacleDetected) adjustForObstacle(leftMotorSpeed, rightMotorSpeed);
 
+  // If reversing is required, handle it
+  if (shouldReverse) {
+    executeReverseManeuver(leftMotorSpeed, rightMotorSpeed);
+  }
+  // Control motors based on the adjusted speeds
   controlMotors(leftMotorSpeed, rightMotorSpeed);
 }
 
@@ -87,7 +95,7 @@ void processLidarData() {
     float angle = lidar.getCurrentPoint().angle;
     byte quality = lidar.getCurrentPoint().quality;
 
-    if (quality > 0 && distance > 0.00 && (angle > 270 || angle < 90) && distance <= MAX_LIDAR_DISTANCE_CM) {
+    if (quality > 0 && distance > 0.00) {
       Serial.println("Distance: " + String(distance) + "cm - Angle: " + String(angle));
       detectObstacleAndAdjust(angle, distance);
     }
@@ -98,7 +106,7 @@ void processLidarData() {
 
 void attemptLidarRecovery() {
   analogWrite(RPLIDAR_MOTOR, 0);
-  Serial.println("Nope :(");
+  Serial.println("Attempting to recover RPLIDAR...");
 
   rplidar_response_device_info_t info;
   if (IS_OK(lidar.getDeviceInfo(info, 100))) {
@@ -109,33 +117,18 @@ void attemptLidarRecovery() {
 }
 
 void detectObstacleAndAdjust(float angle, float distance) {
-  obstacleDetected = true;
+  if ((angle > LEFT_TURN_THRESHOLD || angle < RIGHT_TURN_THRESHOLD) && distance <= MAX_LIDAR_DISTANCE_CM) {
+    obstacleDetected = true; // Obstacle is within detection range
 
-  turnLeft = angle >= 0 && angle < 90;
-  turnRight = angle > 270 && angle <= 360;
-
-  // If the obstacle is directly in front of the car, turn around
-  if (angle > 340 && angle < 20 && distance <= 15) {
-    Serial.println("------------------FRONNNTTTTTT");
-    turnAround = true;
-
-    // If the object is too close, stop the car and reverse a bit
-    if (distance <= 15) {
-      Serial.println("------------------Reverse");
-      shouldReverse = true;
+    // Check if the obstacle is too close and in front
+    if (distance <= MIN_SAFE_DISTANCE_CM && (angle > 345 || angle < 15)) {
+      shouldReverse = true; // Trigger reverse maneuver
+    } else {
+      shouldReverse = false;
+      turnLeft = angle >= 0 && angle < 90;
+      turnRight = angle > 270 && angle <= 360;
     }
   }
-  // If the object is not directly in front of the car, prioritize turning left or right
-  //if (turnLeft || turnRight) turnAround = false;
-
-  // if reverse, prioritize reversing
-  if (shouldReverse || turnAround) {
-    turnLeft = false;
-    turnRight = false;
-  }
-
-  if (turnLeft) Serial.println("Turn left");
-  if (turnRight) Serial.println("Turn right");
 }
 
 void resetObstacleDetection() {
@@ -153,13 +146,13 @@ void adjustForObstacle(int &leftMotorSpeed, int &rightMotorSpeed) {
   } else if (turnRight) {
     leftMotorSpeed = MAX_MOTOR_SPEED;
     rightMotorSpeed = -MAX_MOTOR_SPEED;
-  } else if (turnAround) {
-    leftMotorSpeed = -MAX_MOTOR_SPEED;
-    rightMotorSpeed = -MAX_MOTOR_SPEED;
-  } else if (reverse) {
-    leftMotorSpeed = -MAX_MOTOR_SPEED;
-    rightMotorSpeed = -MAX_MOTOR_SPEED;
   }
+}
+
+void executeReverseManeuver(int &leftMotorSpeed, int &rightMotorSpeed) {
+  Serial.println("Reversing due to close obstacle!");
+  leftMotorSpeed = -MAX_MOTOR_SPEED;
+  rightMotorSpeed = -MAX_MOTOR_SPEED;
 }
 
 void calculateMotorSpeeds(int rcAux1, int rcForwardReverse, int rcLeftRight, int &leftMotorSpeed, int &rightMotorSpeed) {
