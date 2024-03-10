@@ -5,6 +5,7 @@
 RPLidar lidar;
 IBusBM ibus;
 
+// Motor control pins
 int LeftMotorPin1 = 2;
 int LeftMotorPin2 = 3;
 int RightMotorPin1 = 4;
@@ -16,14 +17,6 @@ int RightMotorSpeedPin = 7;
 
 // The PWM pin for control the speed of RPLIDAR's motor.
 constexpr int RPLIDAR_MOTOR = 8;
-// Purple wire is the LiDAR PWM wire (Pin 8)
-// Red wire is the LiDAR Motor +5v wire
-// Yellow wire is the LiDAR Motor GND wire
-// White wire is the LiDAR Ground wire
-// Black wire is the LiDAR 5v wire
-// Orange wire is the LiDAR RX wire
-// Yellow wire is the LiDAR TX wire
-
 constexpr float MAX_lidarDistanceCm_CM = 25.0;
 constexpr int MAX_MOTOR_SPEED = 255;
 
