@@ -5,7 +5,7 @@ Robot Car with LiDAR is a project to build a robot car with a LiDAR sensor to na
 There are 3 operational modes: `Manual`, `Autonomous`, and `Semi-Auto`. 
 - `Manual` mode is controlled by a remote control.
 - `Autonomous` mode is controlled by the LiDAR sensor.
-- `Semi-Auto` mode is a combination of the `Manual` and `Autonomous` modes wher it can avoid obstables even when it is controlled by the remote control.
+- `Semi-Auto` mode is a combination of the `Manual` and `Autonomous` modes, it can avoid obstables even when it is controlled by the RC.
 
 ### RP LiDAR Pin out:
 **Motor**
